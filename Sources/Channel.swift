@@ -35,7 +35,9 @@ public class Channel {
     /// The Socket that the channel belongs to
     let socket: Socket
 
-    
+    /// Presence
+    fileprivate(set) open var presence: Presence
+    fileprivate var presenceStateCallback: ((Presence) -> ())?
     
     /// Current state of the Channel
     var state: ChannelState
@@ -81,6 +83,18 @@ public class Channel {
         self.timeout = PHOENIX_DEFAULT_TIMEOUT // socket.timeout    
         self.joinedOnce = false
         self.pushBuffer = []
+
+        //Presence
+        self.presence = Presence()
+        on("presence_state") { [weak self] response in
+            self?.presence.sync(diff: response)
+            guard let presence = self?.presence else { return }
+            self?.presenceStateCallback?(presence)
+        }
+        on("presence_diff") { [weak self] response in
+            self?.presence.sync(diff: response)
+        }
+
         self.joinPush = Push(channel: self,
                              event: ChannelEvent.join,
                              payload: self.params,
@@ -210,6 +224,12 @@ public class Channel {
         self.bindings.append((event: event, ref: ref, callback: callback))
         return ref
     }
+
+    @discardableResult
+    open func onPresenceUpdate(_ callback: @escaping (Presence)  -> ()) -> Self {
+        self.presenceStateCallback = callback
+        return self
+    }
     
     /// Unsubscribes from channel events.
     ///
@@ -258,6 +278,9 @@ public class Channel {
         let onClose: ((Message) -> Void) = { [weak self] (message) in
             self?.socket.logItems("channel", "leave \(self?.topic ?? "unknown")")
             self?.trigger(message)
+            self?.presence.onJoin = nil
+            self?.presence.onLeave = nil
+            self?.presence.onStateChange = nil
         }
         
         let leavePush = Push(channel: self, event: ChannelEvent.leave, timeout: timeout)
